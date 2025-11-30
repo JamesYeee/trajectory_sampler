@@ -1,0 +1,17 @@
+sampler: from 
+		[t+1, t+20] 4 trajectory points
+	 generate 
+	 	[t+1, t+20] 20 actions [20, 3]
+
+
+
+FDM:
+	from
+		[t-4, t] (5 states[v_x, v_y, rotation] + 5 actions[3])
+	generate
+		[t+1] (1 state[pos_x, pos_y, heading, v_x, v_y, rotation])
+	
+		
+sampler evaluation data structur:
+	[t-4, t] state + 20 actions
+	current_state

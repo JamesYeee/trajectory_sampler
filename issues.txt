@@ -1,0 +1,7 @@
+1.v_y not correct
+
+2.samples with a speed less than 0.2 were removed. because the force suddenly reduce to 0, and brake will be large(feasibility has not yet been assessed)
+
+3.sampler in action space maybe can use in AVs, but cant be used in robot dog.
+
+4. every pedal and brake in .csv should at first be scaled, and then normalized for training(to do), so in sampler scaled - normalization - train - denormalization 

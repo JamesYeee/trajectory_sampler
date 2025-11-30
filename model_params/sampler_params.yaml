@@ -1,0 +1,32 @@
+# CVAE轨迹采样器配置文件
+
+MODEL:
+  waypoint_dim: 3          # waypoint维度 (x, y, heading)
+  action_dim: 3            # action维度 (pedal_cc_scaled, steer_corrected, brake_sensor_scaled)
+  latent_dim: 64           # 潜在空间维度
+  hidden_dims: [64, 64]  # 隐藏层维度
+
+  # 序列长度
+  waypoint_seq_len: 4      # waypoint序列长度 (2Hz × 2秒)
+  action_seq_len: 20       # action序列长度 (10Hz × 2秒)
+
+TRAIN:
+  batch_size: 64           # 批量大小
+  epochs: 100              # 训练轮数
+  lr: 0.001                # 学习率
+  optimizer: Adam          # 优化器
+  
+  # VAE损失权重
+  kl_weight: 0.001         # KL散度损失权重
+  
+  # 学习率调度
+  lr_scheduler:
+    type: StepLR           # 学习率调度器类型
+    step_size: 30          # 每30个epoch衰减一次
+    gamma: 0.5             # 衰减因子
+
+  
+  # 数据集划分比例
+  train_ratio: 0.6
+  val_ratio: 0.2
+  test_ratio: 0.2
