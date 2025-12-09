@@ -9,7 +9,7 @@ import os
 import pickle
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from model_sampler import Simplified_Trajectory_Sampler, compute_vae_loss
+from model_sampler import Simplified_Trajectory_Sampler, compute_cvae_loss
 
 
 def load_config(config_path):
@@ -165,7 +165,7 @@ def train_epoch(model, train_loader, optimizer, device, kl_weight=0.001):
         )
         
         # 计算损失
-        loss, recon_loss, kl_loss = compute_vae_loss(
+        loss, recon_loss, kl_loss = compute_cvae_loss(
             mu, logvar, reconstructed_actions, actions, kl_weight
         )
         
@@ -202,7 +202,7 @@ def validate_epoch(model, val_loader, device, kl_weight=0.001):
             )
             
             # 计算损失
-            loss, recon_loss, kl_loss = compute_vae_loss(
+            loss, recon_loss, kl_loss = compute_cvae_loss(
                 mu, logvar, reconstructed_actions, actions, kl_weight
             )
             
