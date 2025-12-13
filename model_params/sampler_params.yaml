@@ -12,12 +12,12 @@ MODEL:
 
 TRAIN:
   batch_size: 64           # 批量大小
-  epochs: 100              # 训练轮数
+  epochs: 50              # 训练轮数
   lr: 0.001                # 学习率
   optimizer: Adam          # 优化器
   
   # VAE损失权重
-  kl_weight: 0.001         # KL散度损失权重
+  kl_weight: 0.1         # KL散度损失权重
   
   # 学习率调度
   lr_scheduler:

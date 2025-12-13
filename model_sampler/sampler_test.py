@@ -431,7 +431,7 @@ def main_multiple_trajectories():
     
     # 指定要测试的起始索引和轨迹数量
     specified_start_idx = 29
-    n_trajectories = 10  # 生成5条不同的轨迹
+    n_trajectories = 15  # 生成5条不同的轨迹
     
     # 检查文件是否存在
     if not os.path.exists(csv_file_path):
