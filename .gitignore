@@ -1,4 +1,4 @@
 /data
 
-*.png
+#*.png
 __pycache__/
