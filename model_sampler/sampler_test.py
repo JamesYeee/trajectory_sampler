@@ -9,8 +9,8 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 
 # 添加 model 目录到路径
-sys.path.append('/home/jamesye/semester_arbeit/FDM/model')
-from model import FDMNet
+sys.path.append('/home/jamesye/semester_arbeit/FDM')
+from model_FDM.model import FDMNet
 
 def apply_feature_normalization(data, scaler):
     """应用特征标准化"""
@@ -93,13 +93,13 @@ def load_fdm_model_and_scaler():
     ).to(device)
     
     # 加载FDM模型权重
-    fdm_model_path = '/home/jamesye/semester_arbeit/FDM/model/best_model.pth'
+    fdm_model_path = '/home/jamesye/semester_arbeit/FDM/model_FDM/best_model.pth'
     checkpoint = torch.load(fdm_model_path, map_location=device)
     fdm_model.load_state_dict(checkpoint['model_state_dict'])
     fdm_model.eval()
     
     # 加载特征标准化器
-    feature_scaler_path = '/home/jamesye/semester_arbeit/FDM/model/feature_scaler.pkl'
+    feature_scaler_path = '/home/jamesye/semester_arbeit/FDM/model_FDM/feature_scaler.pkl'
     try:
         with open(feature_scaler_path, 'rb') as f:
             feature_scaler = pickle.load(f)
