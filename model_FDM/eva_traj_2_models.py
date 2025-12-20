@@ -5,18 +5,49 @@ import matplotlib.pyplot as plt
 import random
 import os
 import pickle
-from model import FDMNet
+import argparse
+from model import FDMNet, FDMNetPure
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
+
+# Model configurations
+MODEL_CONFIGS = {
+    'fdmnet': {
+        'model_class': FDMNet,
+        'model_params': {
+            'input_size': 6,
+            'hidden_size': 125,
+            'num_layers': 3,
+            'output_size': 18,
+            'sequence_length': 5
+        },
+        'model_path': 'best_model.pth',
+        'scaler_path': 'feature_scaler.pkl',
+        'output_prefix': ''
+    },
+    'fdmnetpure': {
+        'model_class': FDMNetPure,
+        'model_params': {
+            'input_size': 6,
+            'hidden_size': 25,
+            'num_layers': 3,
+            'output_size': 3,
+            'sequence_length': 5
+        },
+        'model_path': 'best_model_pure.pth',
+        'scaler_path': 'feature_scaler_pure.pkl',
+        'output_prefix': 'pure_'
+    }
+}
 
 def load_feature_scaler(scaler_path='feature_scaler.pkl'):
     """Load the feature scaler used during training"""
     try:
         with open(scaler_path, 'rb') as f:
             feature_scaler = pickle.load(f)
-        print("Feature scaler loaded successfully")
+        print(f"Feature scaler loaded successfully from {scaler_path}")
         return feature_scaler
     except FileNotFoundError:
         print(f"Warning: Feature scaler file not found at {scaler_path}")
@@ -39,21 +70,34 @@ def apply_feature_normalization(features, scaler):
     
     return features_normalized
 
-def load_trained_model(model_path='best_model.pth'):
-    """Load the trained model"""
-    model = FDMNet(
-        input_size=6,
-        hidden_size=125,
-        num_layers=3,
-        output_size=18,
-        sequence_length=5
-    ).to(device)
+def load_trained_model(model_config, model_path=None):
+    """
+    Load the trained model with specified configuration
     
+    Args:
+        model_config: Dictionary containing model_class and model_params
+        model_path: Path to model checkpoint (optional, uses config default if None)
+    
+    Returns:
+        Loaded model in eval mode
+    """
+    if model_path is None:
+        model_path = model_config['model_path']
+    
+    # Create model instance
+    model_class = model_config['model_class']
+    model_params = model_config['model_params']
+    
+    model = model_class(**model_params).to(device)
+    
+    # Load checkpoint
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     
-    print(f"Model loaded successfully, validation loss: {checkpoint['val_loss']:.6f}")
+    print(f"Model {model_class.__name__} loaded successfully from {model_path}")
+    print(f"Validation loss: {checkpoint['val_loss']:.6f}")
+    
     return model
 
 def load_evaluation_data(npz_file='../data/evaluation_segments.npz'):
@@ -270,7 +314,7 @@ def evaluate_all_segments(model, eval_data, feature_scaler, num_samples=None, ve
     
     return results
 
-def plot_error_distribution(results, save_path='error_distribution.png'):
+def plot_error_distribution(results, model_name='FDMNet', save_path='error_distribution.png'):
     """Plot final position error distribution"""
     fig, ax = plt.subplots(figsize=(10, 6))
     
@@ -278,11 +322,7 @@ def plot_error_distribution(results, save_path='error_distribution.png'):
     ax.hist(results['all_final_errors'], bins=50, edgecolor='black', color='skyblue')
     ax.set_xlabel('Final Position Error (m)', fontsize=12)
     ax.set_ylabel('Frequency', fontsize=12)
-    # ax.set_title(f'Final Position Error Distribution (at 2s prediction horizon)\n'
-    #              f'Mean: {results["mean_final_error"]:.4f}m ± {results["std_final_error"]:.4f}m\n'
-    #              f'Min: {results["min_final_error"]:.4f}m, Max: {results["max_final_error"]:.4f}m',
-    #              fontsize=14)
-    ax.set_title(f'Final Position Error Distribution (at 2s prediction horizon)\n'
+    ax.set_title(f'{model_name} - Final Position Error Distribution (at 2s prediction horizon)\n'
                  f'Mean: {results["mean_final_error"]:.4f}m ± {results["std_final_error"]:.4f}m\n'
                  f'Min: {results["min_final_error"]:.4f}m, Max: {results["max_final_error"]:.4f}m\n'
                  f'(Top 0.1% excluded: {results["num_removed"]} samples, threshold: {results["error_threshold"]:.4f}m)',
@@ -391,12 +431,30 @@ def plot_worst_trajectories(model, eval_data, feature_scaler, worst_indices, wor
     plt.show()
     print(f"Worst trajectories plot saved to: {save_path}")
 
-def main():
-    """Main function"""
+def main(model_type='fdmnet'):
+    """
+    Main function
+    
+    Args:
+        model_type: Type of model to evaluate ('fdmnet' or 'fdmnetpure')
+    """
+    # Get model configuration
+    if model_type not in MODEL_CONFIGS:
+        print(f"Error: Unknown model type '{model_type}'")
+        print(f"Available models: {list(MODEL_CONFIGS.keys())}")
+        return
+    
+    model_config = MODEL_CONFIGS[model_type]
+    output_prefix = model_config['output_prefix']
+    
+    print(f"\n{'='*60}")
+    print(f"EVALUATING MODEL: {model_config['model_class'].__name__}")
+    print(f"{'='*60}\n")
+    
     # File paths
-    model_path = 'best_model.pth'
+    model_path = model_config['model_path']
     eval_data_path = '../data/evaluation_segments.npz'
-    scaler_path = 'feature_scaler.pkl'
+    scaler_path = model_config['scaler_path']
     
     # Check if files exist
     if not os.path.exists(model_path):
@@ -413,7 +471,7 @@ def main():
         feature_scaler = load_feature_scaler(scaler_path)
         
         # Load model
-        model = load_trained_model(model_path)
+        model = load_trained_model(model_config, model_path)
         
         # Load evaluation data
         print("\nLoading evaluation data...")
@@ -433,9 +491,10 @@ def main():
         print("\n" + "="*60)
         print("EVALUATION RESULTS SUMMARY")
         print("="*60)
+        print(f"Model: {model_config['model_class'].__name__}")
         print(f"Number of samples evaluated: {results['num_samples']}")
         print(f"Number of samples after filtering: {results['num_filtered']}")
-        print(f"Number of samples removed (top 0.5%): {results['num_removed']}")
+        print(f"Number of samples removed (top 0.1%): {results['num_removed']}")
         print(f"Error threshold (99.9 percentile): {results['error_threshold']:.4f} m")
         print(f"\nFinal Position Error (at 2s):")
         print(f"  Mean: {results['mean_final_error']:.4f} m")
@@ -445,39 +504,19 @@ def main():
         print("="*60)
         
         # Plot error distribution
-        plot_error_distribution(results, save_path='error_distribution.png')
-        
-        # Print first sample details before plotting
-        print("\n" + "="*60)
-        print("FIRST SAMPLE TRAJECTORY DETAILS")
-        print("="*60)
-
-        pred_trajectory, _ = predict_trajectory_with_real_actions(
-            model,
-            eval_data['history_features'][0],
-            eval_data['initial_states'][0],
-            eval_data['actions_sequence'][0],
-            feature_scaler
+        plot_error_distribution(
+            results, 
+            model_name=model_config['model_class'].__name__,
+            save_path=f'{output_prefix}error_distribution.png'
         )
-
-        gt_trajectory = eval_data['ground_truth_trajectories'][0]
-        gt_positions = gt_trajectory[:, :2]
-        initial_pos = eval_data['initial_states'][0][:2]
-        gt_positions_full = np.vstack([initial_pos, gt_positions])
-
-        print(f"\nPredicted Trajectory shape: {pred_trajectory.shape}")
-        print(f"pred_trajectory:\n{pred_trajectory}")
-        print(f"\nGround Truth (full with initial) shape: {gt_positions_full.shape}")
-        print(f"gt_positions_full:\n{gt_positions_full}")
-        print(f"\nInitial position: {initial_pos}")
-        print(f"Predicted final position: {pred_trajectory[-1]}")
-        print(f"Ground truth final position: {gt_positions_full[-1]}")
-        print(f"Final position difference: {np.linalg.norm(pred_trajectory[-1] - gt_positions_full[-1]):.4f} m")
-        print("="*60 + "\n")
         
         # Plot sample trajectories
-        plot_sample_trajectories(model, eval_data, feature_scaler, 
-                                 num_samples=5, save_path='sample_trajectories.png')
+        plot_sample_trajectories(
+            model, eval_data, feature_scaler, 
+            num_samples=5, 
+            save_path=f'{output_prefix}sample_trajectories.png'
+        )
+        
         # Plot worst 5 trajectories
         print("\n" + "="*60)
         print("WORST 5 SAMPLES")
@@ -487,10 +526,12 @@ def main():
             print(f"{idx+1}. Sample #{sample_idx}: Error = {error:.4f}m")
         print("="*60 + "\n")
         
-        plot_worst_trajectories(model, eval_data, feature_scaler,
-                               results['worst_5_indices'],
-                               results['worst_5_errors'],
-                               save_path='worst_trajectories.png')
+        plot_worst_trajectories(
+            model, eval_data, feature_scaler,
+            results['worst_5_indices'],
+            results['worst_5_errors'],
+            save_path=f'{output_prefix}worst_trajectories.png'
+        )
                                
     except Exception as e:
         print(f"Program execution error: {e}")
@@ -498,4 +539,12 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Evaluate FDM models on trajectory prediction')
+    parser.add_argument('--model', type=str, default='fdmnet', 
+                       choices=['fdmnet', 'fdmnetpure'],
+                       help='Model type to evaluate (default: fdmnet)')
+    
+    args = parser.parse_args()
+    
+    main(model_type=args.model)

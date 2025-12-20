@@ -217,7 +217,90 @@ class FDMNet(nn.Module):
         pred_state = torch.stack([v_x_pred, v_y_pred, yaw_rate_pred], dim=1)
         return pred_state
 
-    
+
+
+
+class FDMNetPure(nn.Module):
+    def __init__(self, input_size=6, hidden_size=25, num_layers=3, output_size=3, sequence_length=5):
+        """
+        Pure Neural Network version (without physical parameter layer)
+        
+        Args:
+            input_size: Number of input features (6: vel_x, vel_y, rotation_rate, pedal_cc, steer, brake)
+            hidden_size: Hidden dimension of GRU layers (25)
+            num_layers: Number of GRU layers (3)
+            output_size: Number of states to predict (3: v_x, v_y, yaw_rate)
+            sequence_length: Length of input sequence (5)
+        """
+        super(FDMNetPure, self).__init__()
+        
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.output_size = output_size
+        self.sequence_length = sequence_length
+        
+        # GRU layers (same as FDMNet)
+        self.gru = nn.GRU(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=0.1 if num_layers > 1 else 0
+        )
+        
+        # After GRU: (batch_size, sequence_length, hidden_size) -> flatten to (batch_size, sequence_length * hidden_size)
+        flattened_size = sequence_length * hidden_size  # 5 * 25 = 125
+        
+        # Dense layers (adjusted to keep similar parameter count)
+        # Original: 125->128->64->64->18 = ~29,440 params
+        # New: 125->128->64->64->3 would be ~28,480 params
+        # To match better, we can keep an extra layer: 125->128->64->64->64->3 = ~32,576 params
+        self.dense_layers = nn.Sequential(
+            nn.Linear(flattened_size, 128),
+            nn.BatchNorm1d(128),  
+            nn.Mish(),
+            nn.Dropout(0.2),
+            
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.Mish(),
+            nn.Dropout(0.2),
+            
+            nn.Linear(64, 64),  
+            nn.BatchNorm1d(64),
+            nn.Mish(),
+            nn.Dropout(0.1),
+            
+            nn.Linear(64, 64),  # Extra layer to maintain parameter count
+            nn.BatchNorm1d(64),
+            nn.Mish(),
+            nn.Dropout(0.1),
+            
+            nn.Linear(64, output_size)  # Direct output: v_x, v_y, yaw_rate
+        )
+        
+    def forward(self, x, current_s_a):
+        """
+        Forward pass
+        
+        Args:
+            x: Input tensor of shape (batch_size, sequence_length, input_size)
+            current_s_a: Current state (kept for API compatibility, not used in pure NN)
+            
+        Returns:
+            Predicted states tensor of shape (batch_size, 3) - [v_x_pred, v_y_pred, yaw_rate_pred]
+        """
+        # GRU forward pass
+        gru_out, _ = self.gru(x)
+        
+        # Flatten: (batch_size, sequence_length, hidden_size) -> (batch_size, sequence_length * hidden_size)
+        flattened = gru_out.reshape(gru_out.size(0), -1)
+        
+        # Dense layers - direct prediction of state variables
+        pred_state = self.dense_layers(flattened)
+        
+        return pred_state
 
 
 
