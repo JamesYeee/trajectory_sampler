@@ -188,7 +188,7 @@ class Simplified_Trajectory_Sampler(nn.Module):
         
         return actions
 
-    def forward(self, waypoints, ground_truth_actions=None, training=True):
+    def forward(self, waypoints, ground_truth_actions=None, training=True, temperature=1.0):
         """
         前向传播
         
@@ -223,14 +223,14 @@ class Simplified_Trajectory_Sampler(nn.Module):
             # 推理模式：只使用 waypoints，从先验分布采样
             waypoint_encoding, _ = self.encode(waypoints, actions=None)
             
-            # 从标准正态分布采样
-            latent_code = torch.randn(waypoint_encoding.shape[0], self.latent_dim).to(self.device)
+            # 从标准正态分布采样，使用温度参数
+            latent_code = torch.randn(waypoint_encoding.shape[0], self.latent_dim).to(self.device) * temperature
             
             # 解码
             sampled_actions = self.decode(latent_code, waypoint_encoding)
             return sampled_actions
 
-    def sample_multiple(self, waypoints, n_samples=10):
+    def sample_multiple(self, waypoints, n_samples=10, temperature=5.0):
         """
         生成多个可能的action序列
         
@@ -249,7 +249,7 @@ class Simplified_Trajectory_Sampler(nn.Module):
             all_actions = []
             for _ in range(n_samples):
                 # 每次从先验分布采样不同的潜在编码
-                latent_code = torch.randn(batch_size, self.latent_dim).to(self.device)
+                latent_code = torch.randn(batch_size, self.latent_dim).to(self.device) * temperature
                 actions = self.decode(latent_code, waypoint_encoding)
                 all_actions.append(actions.unsqueeze(1))
             
