@@ -14,7 +14,7 @@ import os
 
 
 class FDMNet(nn.Module):
-    def __init__(self, input_size=6, hidden_size=25, num_layers=3, output_size=18, sequence_length=5):
+    def __init__(self, input_size=6, hidden_size=125, num_layers=3, output_size=18, sequence_length=5):
         """
         FDM Neural Network for predicting physical parameters
         
@@ -250,12 +250,8 @@ class FDMNetPure(nn.Module):
         )
         
         # After GRU: (batch_size, sequence_length, hidden_size) -> flatten to (batch_size, sequence_length * hidden_size)
-        flattened_size = sequence_length * hidden_size  # 5 * 25 = 125
+        flattened_size = sequence_length * hidden_size 
         
-        # Dense layers (adjusted to keep similar parameter count)
-        # Original: 125->128->64->64->18 = ~29,440 params
-        # New: 125->128->64->64->3 would be ~28,480 params
-        # To match better, we can keep an extra layer: 125->128->64->64->64->3 = ~32,576 params
         self.dense_layers = nn.Sequential(
             nn.Linear(flattened_size, 128),
             nn.BatchNorm1d(128),  
