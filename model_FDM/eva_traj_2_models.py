@@ -112,70 +112,82 @@ def load_evaluation_data(npz_file='../data/evaluation_segments.npz'):
         'scene_info': data['scene_info']
     }
 
-def predict_trajectory_with_real_actions(model, history_features, initial_state, 
-                                         actions_sequence, feature_scaler=None):
+def predict_trajectory_batch(model, history_features_batch, initial_states_batch, 
+                             actions_sequence_batch, feature_scaler=None, batch_size=32):
     """
-    Predict trajectory using real actions
+    批量预测轨迹（支持并行计算）
     
     Args:
         model: Trained FDM model
-        history_features: (5, 6) historical features
-        initial_state: (6,) initial state [pos_x, pos_y, heading, vel_x, vel_y, rotation_rate]
-        actions_sequence: (20, 3) real actions sequence [pedal, steer, brake]
+        history_features_batch: (B, 5, 6) batch of historical features
+        initial_states_batch: (B, 6) batch of initial states
+        actions_sequence_batch: (B, 20, 3) batch of actions sequences
         feature_scaler: Feature scaler for normalization
+        batch_size: Batch size for inference
     
     Returns:
-        predicted_trajectory: (21, 2) predicted positions [x, y] (including initial position)
-        predicted_states: (21, 6) predicted states (including initial state)
+        predicted_trajectories: (B, 21, 2) predicted positions
+        predicted_states: (B, 21, 6) predicted states
     """
+    B = len(history_features_batch)
+    
     # Apply feature normalization to history
     if feature_scaler is not None:
-        history_features = apply_feature_normalization(history_features.copy(), feature_scaler)
+        history_features_batch = np.array([
+            apply_feature_normalization(hf.copy(), feature_scaler) 
+            for hf in history_features_batch
+        ])
     
     # Convert to tensors
-    features_tensor = torch.FloatTensor(history_features).unsqueeze(0).to(device)  # (1, 5, 6)
+    features_tensor = torch.FloatTensor(history_features_batch).to(device)  # (B, 5, 6)
+    initial_states_tensor = torch.FloatTensor(initial_states_batch).to(device)  # (B, 6)
     
-    # Extract initial state components
-    current_pos_x = initial_state[0]
-    current_pos_y = initial_state[1]
-    current_heading = initial_state[2]
-    current_vel_x = initial_state[3]
-    current_vel_y = initial_state[4]
-    current_rotation_rate = initial_state[5]
+    # Initialize current states
+    current_pos_x = initial_states_tensor[:, 0].clone()
+    current_pos_y = initial_states_tensor[:, 1].clone()
+    current_heading = initial_states_tensor[:, 2].clone()
+    current_vel_x = initial_states_tensor[:, 3].clone()
+    current_vel_y = initial_states_tensor[:, 4].clone()
+    current_rotation_rate = initial_states_tensor[:, 5].clone()
     
-    # Store predicted trajectory and states
-    predicted_trajectory = [[current_pos_x, current_pos_y]]
-    predicted_states = [[current_pos_x, current_pos_y, current_heading, 
-                        current_vel_x, current_vel_y, current_rotation_rate]]
+    # Store trajectories
+    predicted_trajectories = torch.stack([current_pos_x, current_pos_y], dim=1).unsqueeze(1)  # (B, 1, 2)
+    predicted_states_list = [torch.stack([
+        current_pos_x, current_pos_y, current_heading,
+        current_vel_x, current_vel_y, current_rotation_rate
+    ], dim=1)]  # List of (B, 6)
     
     # Predict for 20 steps
     with torch.no_grad():
-        for step in range(len(actions_sequence)):
-            # Get current actions (from real data)
-            actions = actions_sequence[step]  # [pedal, steer, brake]
+        for step in range(20):
+            # Get current actions for all samples in batch
+            actions = torch.FloatTensor(actions_sequence_batch[:, step, :]).to(device)  # (B, 3)
             
             # Create current state tensor for model input
-            # Model expects: [pos_x, pos_y, heading, vel_x, vel_y, rotation_rate, pedal, steer, brake]
-            current_state_tensor = torch.FloatTensor([
-                current_pos_x, current_pos_y, current_heading,
-                current_vel_x, current_vel_y, current_rotation_rate,
-                actions[0], actions[1], actions[2]
-            ]).unsqueeze(0).to(device)
+            current_state_tensor = torch.cat([
+                current_pos_x.unsqueeze(1),
+                current_pos_y.unsqueeze(1),
+                current_heading.unsqueeze(1),
+                current_vel_x.unsqueeze(1),
+                current_vel_y.unsqueeze(1),
+                current_rotation_rate.unsqueeze(1),
+                actions
+            ], dim=1)  # (B, 9)
             
-            # Model predicts next velocity states
-            pred_states = model(features_tensor, current_state_tensor)  # (1, 3)
+            # Model predicts next velocity states (batch)
+            pred_states = model(features_tensor, current_state_tensor)  # (B, 3)
             
             # Extract predicted states
-            pred_vel_x = pred_states[0, 0].item()
-            pred_vel_y = 0  # pred_states[0, 1].item()
-            pred_rotation_rate = pred_states[0, 2].item()
+            pred_vel_x = pred_states[:, 0]
+            pred_vel_y = torch.zeros_like(pred_vel_x)  # pred_states[:, 1]
+            pred_rotation_rate = pred_states[:, 2]
             
             # Integrate to get position and heading (dt = 0.1s)
             dt = 0.1
-            next_pos_x = current_pos_x + dt * (current_vel_x * np.cos(current_heading) - 
-                                                current_vel_y * np.sin(current_heading))
-            next_pos_y = current_pos_y + dt * (current_vel_x * np.sin(current_heading) + 
-                                                current_vel_y * np.cos(current_heading))
+            next_pos_x = current_pos_x + dt * (current_vel_x * torch.cos(current_heading) - 
+                                                current_vel_y * torch.sin(current_heading))
+            next_pos_y = current_pos_y + dt * (current_vel_x * torch.sin(current_heading) + 
+                                                current_vel_y * torch.cos(current_heading))
             next_heading = current_heading + dt * current_rotation_rate
             
             # Update states
@@ -187,25 +199,41 @@ def predict_trajectory_with_real_actions(model, history_features, initial_state,
             current_rotation_rate = pred_rotation_rate
             
             # Store predictions
-            predicted_trajectory.append([next_pos_x, next_pos_y])
-            predicted_states.append([next_pos_x, next_pos_y, next_heading,
-                                    pred_vel_x, pred_vel_y, pred_rotation_rate])
+            predicted_trajectories = torch.cat([
+                predicted_trajectories,
+                torch.stack([next_pos_x, next_pos_y], dim=1).unsqueeze(1)
+            ], dim=1)
+            
+            predicted_states_list.append(torch.stack([
+                next_pos_x, next_pos_y, next_heading,
+                pred_vel_x, pred_vel_y, pred_rotation_rate
+            ], dim=1))
             
             # Update input sequence - sliding window
-            new_feature = np.array([pred_vel_x, pred_vel_y, pred_rotation_rate,
-                                   actions[0], actions[1], actions[2]], dtype=np.float32)
+            new_features = torch.stack([
+                pred_vel_x, pred_vel_y, pred_rotation_rate,
+                actions[:, 0], actions[:, 1], actions[:, 2]
+            ], dim=1)  # (B, 6)
             
-            # Apply normalization to new feature
+            # Apply normalization to new features
             if feature_scaler is not None:
-                new_feature = apply_feature_normalization(new_feature, feature_scaler)
+                new_features_np = new_features.cpu().numpy()
+                new_features_normalized = np.array([
+                    apply_feature_normalization(nf, feature_scaler) 
+                    for nf in new_features_np
+                ])
+                new_features = torch.FloatTensor(new_features_normalized).to(device)
             
             # Update feature sequence
             features_tensor = torch.cat([
                 features_tensor[:, 1:, :],
-                torch.FloatTensor(new_feature).unsqueeze(0).unsqueeze(0).to(device)
+                new_features.unsqueeze(1)
             ], dim=1)
     
-    return np.array(predicted_trajectory), np.array(predicted_states)
+    predicted_trajectories = predicted_trajectories.cpu().numpy()  # (B, 21, 2)
+    predicted_states = torch.stack(predicted_states_list, dim=1).cpu().numpy()  # (B, 21, 6)
+    
+    return predicted_trajectories, predicted_states
 
 def calculate_trajectory_errors(predicted_trajectory, ground_truth_trajectory):
     """
@@ -229,16 +257,17 @@ def calculate_trajectory_errors(predicted_trajectory, ground_truth_trajectory):
     
     return final_error
 
-def evaluate_all_segments(model, eval_data, feature_scaler, num_samples=None, verbose=False):
+def evaluate_all_segments_fast(model, eval_data, feature_scaler, batch_size=64, num_samples=None, verbose=False):
     """
-    Evaluate model on all segments from evaluation data
+    快速批量评估所有segments（并行计算版本）
     
     Args:
         model: Trained FDM model
         eval_data: Dictionary containing evaluation segments
         feature_scaler: Feature scaler
+        batch_size: Batch size for parallel inference
         num_samples: Number of samples to evaluate (None for all)
-        verbose: Print detailed information for each sample
+        verbose: Print detailed information
     
     Returns:
         results: Dictionary containing aggregated results
@@ -248,55 +277,59 @@ def evaluate_all_segments(model, eval_data, feature_scaler, num_samples=None, ve
     actions_sequence = eval_data['actions_sequence']
     ground_truth_trajectories = eval_data['ground_truth_trajectories']
     
-    # Determine number of samples to evaluate
+    # Determine number of samples
     total_samples = len(history_features)
     if num_samples is None or num_samples > total_samples:
         num_samples = total_samples
     
-    print(f"\nEvaluating {num_samples} segments...")
+    print(f"\nEvaluating {num_samples} segments with batch size {batch_size}...")
     
-    # Store all final errors
     all_final_errors = []
     
-    for i in range(num_samples):
-        # Predict trajectory using real actions
-        pred_trajectory, pred_states = predict_trajectory_with_real_actions(
-            model,
-            history_features[i],
-            initial_states[i],
-            actions_sequence[i],
-            feature_scaler
+    # Process in batches
+    num_batches = (num_samples + batch_size - 1) // batch_size
+    
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * batch_size
+        end_idx = min(start_idx + batch_size, num_samples)
+        current_batch_size = end_idx - start_idx
+        
+        # Prepare batch data
+        batch_history = history_features[start_idx:end_idx]
+        batch_initial = initial_states[start_idx:end_idx]
+        batch_actions = actions_sequence[start_idx:end_idx]
+        batch_gt = ground_truth_trajectories[start_idx:end_idx]
+        
+        # Batch prediction
+        pred_trajectories, _ = predict_trajectory_batch(
+            model, batch_history, batch_initial, batch_actions, feature_scaler, batch_size
         )
         
-        # Calculate final position error
-        final_error = calculate_trajectory_errors(pred_trajectory, ground_truth_trajectories[i])
+        # Calculate errors for this batch
+        for i in range(current_batch_size):
+            gt_final_position = batch_gt[i][-1, :2]
+            pred_final_position = pred_trajectories[i][-1, :]
+            final_error = np.sqrt(np.sum((pred_final_position - gt_final_position)**2))
+            all_final_errors.append(final_error)
         
-        all_final_errors.append(final_error)
-        
-        if verbose and i < 5:  # Print details for first 5 samples
-            print(f"\nSample {i}:")
-            print(f"  Final position error: {final_error:.4f} m")
-        
-        if (i + 1) % 100 == 0:
-            print(f"Processed {i + 1}/{num_samples} segments...")
+        if (batch_idx + 1) % 10 == 0 or batch_idx == num_batches - 1:
+            print(f"Processed {end_idx}/{num_samples} segments...")
     
     # Filter out top 0.1% errors
     all_final_errors_array = np.array(all_final_errors)
-    threshold_percentile = 99.9  # Keep bottom 99.9%, remove top 0.1%
+    threshold_percentile = 99.9
     error_threshold = np.percentile(all_final_errors_array, threshold_percentile)
     
-    # Filter errors
     filtered_errors = all_final_errors_array[all_final_errors_array <= error_threshold]
     num_removed = len(all_final_errors_array) - len(filtered_errors)
     
     print(f"\nFiltering: Removed top 0.1% ({num_removed} samples) with errors > {error_threshold:.4f}m")
     
-    # Find top 5 worst samples (before filtering)
-    sorted_indices = np.argsort(all_final_errors_array)[::-1]  # Sort descending
+    # Find top 5 worst samples
+    sorted_indices = np.argsort(all_final_errors_array)[::-1]
     worst_5_indices = sorted_indices[:5]
     worst_5_errors = all_final_errors_array[worst_5_indices]
-
-    # Aggregate results
+    
     results = {
         'num_samples': num_samples,
         'num_filtered': len(filtered_errors),
@@ -339,22 +372,34 @@ def plot_error_distribution(results, model_name='FDMNet', save_path='error_distr
 
 def plot_sample_trajectories(model, eval_data, feature_scaler, num_samples=5, save_path='sample_trajectories.png'):
     """Plot sample trajectory predictions"""
+    # Randomly select sample indices
+    total_samples = len(eval_data['history_features'])
+    random_indices = random.sample(range(total_samples), num_samples)
+    
+    # Gather data for randomly selected samples
+    selected_history = np.array([eval_data['history_features'][idx] for idx in random_indices])
+    selected_initial = np.array([eval_data['initial_states'][idx] for idx in random_indices])
+    selected_actions = np.array([eval_data['actions_sequence'][idx] for idx in random_indices])
+    
+    # Batch predict all samples at once
+    pred_trajectories, _ = predict_trajectory_batch(
+        model,
+        selected_history,
+        selected_initial,
+        selected_actions,
+        feature_scaler
+    )
+    
     fig, axes = plt.subplots(1, num_samples, figsize=(5*num_samples, 5))
     if num_samples == 1:
         axes = [axes]
     
     for i in range(num_samples):
-        # Predict trajectory
-        pred_trajectory, _ = predict_trajectory_with_real_actions(
-            model,
-            eval_data['history_features'][i],
-            eval_data['initial_states'][i],
-            eval_data['actions_sequence'][i],
-            feature_scaler
-        )
+        sample_idx = random_indices[i]  # Get actual sample index
+        pred_trajectory = pred_trajectories[i]  # (21, 2)
         
         # Get ground truth
-        gt_trajectory = eval_data['ground_truth_trajectories'][i]
+        gt_trajectory = eval_data['ground_truth_trajectories'][sample_idx]
         gt_positions = gt_trajectory[:, :2]      
 
         # Calculate error
@@ -370,7 +415,7 @@ def plot_sample_trajectories(model, eval_data, feature_scaler, num_samples=5, sa
         
         axes[i].set_xlabel('X Position (m)')
         axes[i].set_ylabel('Y Position (m)')
-        axes[i].set_title(f'Sample {i}\nFinal Position Error: {errors:.3f}m')
+        axes[i].set_title(f'Sample #{sample_idx}\nFinal Position Error: {errors:.3f}m')
         axes[i].legend()
         axes[i].grid(True, alpha=0.3)
         axes[i].axis('equal')
@@ -384,19 +429,27 @@ def plot_worst_trajectories(model, eval_data, feature_scaler, worst_indices, wor
                             save_path='worst_trajectories.png'):
     """Plot trajectories with the highest errors"""
     num_samples = len(worst_indices)
+    
+    # Gather data for all worst samples
+    worst_history = np.array([eval_data['history_features'][idx] for idx in worst_indices])
+    worst_initial = np.array([eval_data['initial_states'][idx] for idx in worst_indices])
+    worst_actions = np.array([eval_data['actions_sequence'][idx] for idx in worst_indices])
+    
+    # Batch predict all worst samples at once
+    pred_trajectories, _ = predict_trajectory_batch(
+        model,
+        worst_history,
+        worst_initial,
+        worst_actions,
+        feature_scaler
+    )
+    
     fig, axes = plt.subplots(1, num_samples, figsize=(5*num_samples, 5))
     if num_samples == 1:
         axes = [axes]
     
     for idx, (sample_idx, error) in enumerate(zip(worst_indices, worst_errors)):
-        # Predict trajectory
-        pred_trajectory, _ = predict_trajectory_with_real_actions(
-            model,
-            eval_data['history_features'][sample_idx],
-            eval_data['initial_states'][sample_idx],
-            eval_data['actions_sequence'][sample_idx],
-            feature_scaler
-        )
+        pred_trajectory = pred_trajectories[idx]  # (21, 2)
         
         # Get ground truth
         gt_trajectory = eval_data['ground_truth_trajectories'][sample_idx]
@@ -438,6 +491,11 @@ def main(model_type='fdmnet'):
     Args:
         model_type: Type of model to evaluate ('fdmnet' or 'fdmnetpure')
     """
+
+    # Create results folder (if not exists)
+    results_dir = './results'
+    os.makedirs(results_dir, exist_ok=True)
+
     # Get model configuration
     if model_type not in MODEL_CONFIGS:
         print(f"Error: Unknown model type '{model_type}'")
@@ -479,11 +537,12 @@ def main(model_type='fdmnet'):
         print(f"Loaded {len(eval_data['history_features'])} evaluation segments")
         
         # Evaluate on all segments (or specify num_samples for subset)
-        results = evaluate_all_segments(
+        results = evaluate_all_segments_fast(
             model, 
             eval_data, 
             feature_scaler, 
-            num_samples=None,  # Set to specific number for quick test, None for all
+            batch_size=128,  
+            num_samples=None,
             verbose=True
         )
         
@@ -507,14 +566,14 @@ def main(model_type='fdmnet'):
         plot_error_distribution(
             results, 
             model_name=model_config['model_class'].__name__,
-            save_path=f'{output_prefix}error_distribution.png'
+            save_path=f'{results_dir}/{output_prefix}error_distribution.png'
         )
         
         # Plot sample trajectories
         plot_sample_trajectories(
             model, eval_data, feature_scaler, 
             num_samples=5, 
-            save_path=f'{output_prefix}sample_trajectories.png'
+            save_path=f'{results_dir}/{output_prefix}sample_trajectories.png'
         )
         
         # Plot worst 5 trajectories
@@ -530,7 +589,7 @@ def main(model_type='fdmnet'):
             model, eval_data, feature_scaler,
             results['worst_5_indices'],
             results['worst_5_errors'],
-            save_path=f'{output_prefix}worst_trajectories.png'
+            save_path=f'{results_dir}/{output_prefix}worst_trajectories.png'
         )
                                
     except Exception as e:
@@ -548,3 +607,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     main(model_type=args.model)
+
+
+# python eva_traj_2_models.py --model fdmnet
+# python eva_traj_2_models.py --model fdmnetpure
