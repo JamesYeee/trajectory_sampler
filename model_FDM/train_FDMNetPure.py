@@ -166,9 +166,9 @@ def train_model():
     # 创建FDMNetPure模型
     model = FDMNetPure(
         input_size=6,
-        hidden_size=25,  # 与原模型一致
+        hidden_size=125,  
         num_layers=3,
-        output_size=3,   # 直接输出3个状态变量
+        output_size=3,   
         sequence_length=5
     ).to(device)
     
@@ -292,7 +292,7 @@ def test_model():
     
     model = FDMNetPure(
         input_size=6,
-        hidden_size=25,
+        hidden_size=125,
         num_layers=3,
         output_size=3,
         sequence_length=5

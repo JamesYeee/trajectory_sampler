@@ -31,7 +31,7 @@ MODEL_CONFIGS = {
         'model_class': FDMNetPure,
         'model_params': {
             'input_size': 6,
-            'hidden_size': 25,
+            'hidden_size': 125,
             'num_layers': 3,
             'output_size': 3,
             'sequence_length': 5

@@ -221,7 +221,7 @@ class FDMNet(nn.Module):
 
 
 class FDMNetPure(nn.Module):
-    def __init__(self, input_size=6, hidden_size=25, num_layers=3, output_size=3, sequence_length=5):
+    def __init__(self, input_size=6, hidden_size=125, num_layers=3, output_size=3, sequence_length=5):
         """
         Pure Neural Network version (without physical parameter layer)
         
